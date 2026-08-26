@@ -21,6 +21,8 @@ func NewResolver(db *store.DB, idGen func(prefix string) string) *Resolver {
 }
 
 // Resolve 按环号复用或新建个体，返回个体与是否新建。
+// 并发一致：环号唯一约束兜底，无论本次是否新建，最终都回读真实持久化记录，
+// 保证调用方拿到稳定标识，避免并发首创建产生幻影 ID。
 func (r *Resolver) Resolve(ring, species string) (*model.Individual, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -37,8 +39,17 @@ func (r *Resolver) Resolve(ring, species string) (*model.Individual, bool, error
 		Species:   species,
 		CreatedAt: time.Now().UTC(),
 	}
-	if err := r.db.SaveIndividual(ind); err != nil {
+	inserted, err := r.db.SaveIndividual(ind)
+	if err != nil {
 		return nil, false, err
+	}
+	if !inserted {
+		// 并发同环号首创建：回读已持久化记录，复用稳定 ID。
+		existing, err = r.db.GetIndividualByRing(ring)
+		if err != nil {
+			return nil, false, err
+		}
+		return existing, false, nil
 	}
 	return ind, true, nil
 }

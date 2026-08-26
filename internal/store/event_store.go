@@ -7,10 +7,11 @@ import (
 	"task253-birdbanding/internal/model"
 )
 
-// SaveEvent 插入事件。fingerprint 唯一约束保证幂等去重。
-func (db *DB) SaveEvent(e *model.Event) error {
-	// The unique fingerprint is the final persistence guard for concurrent imports.
-	_, err := db.Exec(
+// SaveEvent 插入事件。fingerprint 唯一约束保证幂等去重：相同指纹的并发导入
+// 仅有一条记录落库，其余以 ON CONFLICT(fingerprint) DO NOTHING 静默落败。
+// 返回 inserted 区分本次是否真正写入，便于调用方在竞争落败时回读已持久化记录。
+func (db *DB) SaveEvent(e *model.Event) (bool, error) {
+	res, err := db.Exec(
 		`INSERT INTO events(id,batch_id,individual_id,ring_code,type,location_id,event_date,status,fingerprint,error_reason,created_at)
 		 VALUES(?,?,?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(fingerprint) DO NOTHING`,
@@ -19,9 +20,13 @@ func (db *DB) SaveEvent(e *model.Event) error {
 		e.CreatedAt.UTC().Format(time.RFC3339),
 	)
 	if err != nil {
-		return err
+		return false, err
 	}
-	return nil
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 // GetEventByFingerprint 按指纹读取事件（幂等去重查询）。

@@ -7,14 +7,23 @@ import (
 	"task253-birdbanding/internal/model"
 )
 
-// SaveIndividual 插入个体（环号唯一）。
-func (db *DB) SaveIndividual(ind *model.Individual) error {
-	_, err := db.Exec(
+// SaveIndividual 插入个体；环号唯一约束兜底并发首创建。
+// 返回 inserted 区分本次是否真正写入，便于调用方在竞争落败时回读真实记录。
+// 不更新已有个体的 species（环号冲突时仅复用既有行）。
+func (db *DB) SaveIndividual(ind *model.Individual) (bool, error) {
+	res, err := db.Exec(
 		`INSERT INTO individuals(id,ring_code,species,created_at) VALUES(?,?,?,?)
-		 ON CONFLICT(ring_code) DO UPDATE SET species=excluded.species`,
+		 ON CONFLICT(ring_code) DO NOTHING`,
 		ind.ID, ind.RingCode, ind.Species, ind.CreatedAt.UTC().Format(time.RFC3339),
 	)
-	return err
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 // GetIndividual 按 ID 读取个体。

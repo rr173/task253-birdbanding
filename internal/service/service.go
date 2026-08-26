@@ -92,8 +92,8 @@ func (s *Service) CreateLocation(name string, lat, lon, precisionM float64) (*mo
 // ---- 事件导入与校验 ----
 
 // ImportEvent 导入单个事件（幂等去重 + 身份关联）。
+// 并发一致：相同指纹的并发导入收敛为一条记录与一个稳定标识（见 event.Importer.Import）。
 func (s *Service) ImportEvent(in event.ImportInput) (*model.Event, bool, error) {
-	// BUG: the service no longer closes the check-then-insert window.
 	return s.importer.Import(in)
 }
 
