@@ -143,3 +143,78 @@ func TestInvalidTransition(t *testing.T) {
 		t.Fatalf("已排除事件再次校验应非法流转, 实际: %v", err)
 	}
 }
+
+// TestBatchPublishedAtPersists 验证发布时间随发布动作固化并持久保留，
+// 草稿与待复核批次不伪造发布时间。
+func TestBatchPublishedAtPersists(t *testing.T) {
+	svc := New(newTestDB(t))
+
+	batch, err := svc.CreateBatch("发布批次")
+	if err != nil {
+		t.Fatalf("创建批次: %v", err)
+	}
+	// 草稿态：不应存在发布时间。
+	draft, err := svc.DB().GetBatch(batch.ID)
+	if err != nil {
+		t.Fatalf("读取草稿批次: %v", err)
+	}
+	if draft.PublishedAt != nil {
+		t.Fatalf("草稿批次不应有发布时间, 实际: %v", draft.PublishedAt)
+	}
+	if draft.Status != model.BatchDraft {
+		t.Fatalf("期望草稿态, 实际: %v", draft.Status)
+	}
+	// 推进到待复核：仍不应伪造发布时间。
+	if err := svc.TransitionBatch(batch.ID, model.BatchReview); err != nil {
+		t.Fatalf("流转到待复核: %v", err)
+	}
+	review, err := svc.DB().GetBatch(batch.ID)
+	if err != nil {
+		t.Fatalf("读取待复核批次: %v", err)
+	}
+	if review.PublishedAt != nil {
+		t.Fatalf("待复核批次不应有发布时间, 实际: %v", review.PublishedAt)
+	}
+
+	// 发布：应固化发布时间。
+	if err := svc.TransitionBatch(batch.ID, model.BatchPublished); err != nil {
+		t.Fatalf("发布: %v", err)
+	}
+	first, err := svc.DB().GetBatch(batch.ID)
+	if err != nil {
+		t.Fatalf("读取已发布批次: %v", err)
+	}
+	if first.Status != model.BatchPublished {
+		t.Fatalf("期望已发布态, 实际: %v", first.Status)
+	}
+	if first.PublishedAt == nil {
+		t.Fatalf("已发布批次的发布时间为空（旧 BUG 回归）")
+	}
+	if first.PublishedAt.After(time.Now().UTC().Add(5 * time.Second)) {
+		t.Fatalf("发布时间不应指向未来: %v", first.PublishedAt)
+	}
+
+	// 重新读取（模拟研究者再次打开批次详情）：发布时间应持续保留。
+	reopened, err := svc.DB().GetBatch(batch.ID)
+	if err != nil {
+		t.Fatalf("重读批次: %v", err)
+	}
+	if reopened.PublishedAt == nil {
+		t.Fatalf("重新读取批次后发布时间丢失")
+	}
+	if !reopened.PublishedAt.Equal(*first.PublishedAt) {
+		t.Fatalf("发布时间不一致: 首次 %v 重读 %v", first.PublishedAt, reopened.PublishedAt)
+	}
+
+	// 封存已发布批次：发布时间应保留，不被清空。
+	if err := svc.TransitionBatch(batch.ID, model.BatchSealed); err != nil {
+		t.Fatalf("封存: %v", err)
+	}
+	sealed, err := svc.DB().GetBatch(batch.ID)
+	if err != nil {
+		t.Fatalf("读取封存批次: %v", err)
+	}
+	if sealed.PublishedAt == nil || !sealed.PublishedAt.Equal(*first.PublishedAt) {
+		t.Fatalf("封存后发布时间应保留不变, 实际: %v", sealed.PublishedAt)
+	}
+}
