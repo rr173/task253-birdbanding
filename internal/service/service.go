@@ -198,8 +198,13 @@ func (s *Service) TransitionVersion(versionID string, to model.VersionStatus) er
 // ---- 查询 ----
 
 // GetIndividualTimeline 返回个体事件时间线（按日期升序）。
+// 个体不存在时返回 ErrNotFound，便于 HTTP 层映射为 404；存在但无事件返回空切片。
 func (s *Service) GetIndividualTimeline(individualID string) ([]*model.Event, error) {
-	// The service exposes the persisted chronological timeline contract.
+	// Timeline reads are tied to a concrete individual: a missing individual is a
+	// not-found resource, distinct from an individual that simply has no events yet.
+	if _, err := s.db.GetIndividual(individualID); err != nil {
+		return nil, err
+	}
 	return s.db.EventsByIndividualSorted(individualID)
 }
 

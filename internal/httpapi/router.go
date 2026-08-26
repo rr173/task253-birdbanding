@@ -38,6 +38,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/individuals", s.wrap(s.handleIndividuals))
 	mux.HandleFunc("/api/individuals/{id}", s.wrap(s.handleIndividualByID))
 	mux.HandleFunc("/api/individuals/{id}/build-edges", s.wrap(s.handleIndividualByID))
+	mux.HandleFunc("/api/individuals/{id}/events", s.wrap(s.handleIndividualEvents))
 	mux.HandleFunc("/api/edges", s.wrap(s.handleEdges))
 	mux.HandleFunc("/api/edges/", s.wrap(s.handleEdgeByID))
 	mux.HandleFunc("/api/edges/{id}/keep-rare", s.wrap(s.handleEdgeByID))
