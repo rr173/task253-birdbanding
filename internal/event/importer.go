@@ -27,7 +27,7 @@ func (im *Importer) Import(in ImportInput) (*model.Event, bool, error) {
 	if err := in.Validate(); err != nil {
 		return nil, false, err
 	}
-	fp := model.Fingerprint(in.RingCode, model.EventBanding, in.LocationID, in.EventDate)
+	fp := model.Fingerprint(in.RingCode, in.Type, in.LocationID, in.EventDate)
 
 	im.mu.Lock()
 	defer im.mu.Unlock()

@@ -37,8 +37,10 @@ type Individual struct {
 }
 
 // Fingerprint 计算事件幂等指纹：相同个体/环号/类型/地点/日期视为同一事件。
+// 类型参与指纹，使同一鸟在同地点同日的环志与重捕可分别保存；
+// 而真正重复导入（含类型完全一致）仍命中同一指纹而被幂等去重。
 func Fingerprint(ringCode string, typ EventType, locationID string, eventDate time.Time) string {
-	return fmt.Sprintf("%s|%s|%s", ringCode, locationID, eventDate.UTC().Format("2006-01-02"))
+	return fmt.Sprintf("%s|%s|%s|%s", ringCode, typ, locationID, eventDate.UTC().Format("2006-01-02"))
 }
 
 // IsTerminal 表示事件已处于终态。

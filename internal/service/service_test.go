@@ -143,3 +143,57 @@ func TestInvalidTransition(t *testing.T) {
 		t.Fatalf("已排除事件再次校验应非法流转, 实际: %v", err)
 	}
 }
+
+// TestDistinctEventTypesNotDeduped 验证同一鸟、同一天、同一地点的环志与重捕
+// 因事件类型不同应分别保存，不被指纹去重吞并；同时真正重复导入仍幂等。
+func TestDistinctEventTypesNotDeduped(t *testing.T) {
+	svc := New(newTestDB(t))
+	batch, _ := svc.CreateBatch("批次")
+	loc, _ := svc.CreateLocation("地点", 60.0, 10.0, 500)
+	date := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+
+	banding, existedB, err := svc.ImportEvent(event.ImportInput{
+		BatchID: batch.ID, RingCode: "GH2468", Type: model.EventBanding,
+		LocationID: loc.ID, EventDate: date, Species: "Turdus merula",
+	})
+	if err != nil || existedB {
+		t.Fatalf("导入环志应成功且非重复: err=%v existed=%v", err, existedB)
+	}
+	recap, existedR, err := svc.ImportEvent(event.ImportInput{
+		BatchID: batch.ID, RingCode: "GH2468", Type: model.EventRecapture,
+		LocationID: loc.ID, EventDate: date, Species: "Turdus merula",
+	})
+	if err != nil {
+		t.Fatalf("导入重捕应成功: %v", err)
+	}
+	if existedR {
+		t.Fatalf("同日同地不同类型重捕被误判为重复，研究者无法看到两次观测")
+	}
+	if banding.ID == recap.ID {
+		t.Fatalf("环志与重捕应分别保存为不同事件，却返回了同一 ID")
+	}
+	if banding.Type == recap.Type {
+		t.Fatalf("两次观测类型应不同: 都=%s", banding.Type)
+	}
+
+	// 真正重复导入（类型完全一致）仍应幂等去重。
+	dup, existedDup, err := svc.ImportEvent(event.ImportInput{
+		BatchID: batch.ID, RingCode: "GH2468", Type: model.EventRecapture,
+		LocationID: loc.ID, EventDate: date, Species: "Turdus merula",
+	})
+	if err != nil || !existedDup {
+		t.Fatalf("真正重复导入应幂等: err=%v existed=%v", err, existedDup)
+	}
+	if dup.ID != recap.ID {
+		t.Fatalf("重复导入应返回已存在事件 ID")
+	}
+
+	// 数据库应恰好保存两条不同类型事件。
+	events, err := svc.DB().ListEvents(batch.ID, "", "")
+	if err != nil {
+		t.Fatalf("列出事件: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("应保存 2 条事件（环志+重捕），实际 %d", len(events))
+	}
+}
