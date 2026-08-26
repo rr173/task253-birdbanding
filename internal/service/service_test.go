@@ -123,6 +123,86 @@ func TestIdempotentImport(t *testing.T) {
 	}
 }
 
+// TestCorrectRingKeepsIdempotencyConsistent 验证校正环号后，事件、个体身份与幂等判断保持一致：
+// 再次导入同一新环号/地点/日期的记录应被识别为原记录并返回同一事件（真正重复导入幂等）。
+func TestCorrectRingKeepsIdempotencyConsistent(t *testing.T) {
+	svc := New(newTestDB(t))
+	batch, _ := svc.CreateBatch("批次")
+	loc, _ := svc.CreateLocation("地点", 60.0, 10.0, 500)
+	date := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+	ev, _, err := svc.ImportEvent(event.ImportInput{
+		BatchID: batch.ID, RingCode: "GH1111", Type: model.EventBanding,
+		LocationID: loc.ID, EventDate: date, Species: "Anser anser",
+	})
+	if err != nil {
+		t.Fatalf("导入原始事件: %v", err)
+	}
+
+	// 校正环号为新环号。
+	const newRing = "GH2222"
+	if err := svc.CorrectRing(ev.ID, newRing, "Anser anser"); err != nil {
+		t.Fatalf("校正环号: %v", err)
+	}
+	// 事件详情应显示新环号。
+	got, err := svc.DB().GetEvent(ev.ID)
+	if err != nil {
+		t.Fatalf("读取事件: %v", err)
+	}
+	if got.RingCode != newRing {
+		t.Fatalf("校正后环号应为 %s, 实际 %s", newRing, got.RingCode)
+	}
+
+	// 再次导入同一新环号/地点/日期：应识别为原记录（幂等），返回同一事件。
+	dup, existed, err := svc.ImportEvent(event.ImportInput{
+		BatchID: batch.ID, RingCode: newRing, Type: model.EventBanding,
+		LocationID: loc.ID, EventDate: date, Species: "Anser anser",
+	})
+	if err != nil {
+		t.Fatalf("校正后重复导入应成功: %v", err)
+	}
+	if !existed {
+		t.Fatalf("校正后重复导入应识别为已存在, existed=false")
+	}
+	if dup.ID != ev.ID {
+		t.Fatalf("校正后重复导入应返回同一事件 ID, got %s want %s", dup.ID, ev.ID)
+	}
+
+	// 不应产生第二条事件。
+	events, err := svc.DB().ListEvents(batch.ID, "", "")
+	if err != nil {
+		t.Fatalf("列出事件: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("校正后幂等应保持单条事件, 实际 %d", len(events))
+	}
+}
+
+// TestCorrectRingRejectsDuplicateFingerprint 验证校正环号后若与既有记录撞指纹，应被拒绝。
+func TestCorrectRingRejectsDuplicateFingerprint(t *testing.T) {
+	svc := New(newTestDB(t))
+	batch, _ := svc.CreateBatch("批次")
+	loc, _ := svc.CreateLocation("地点", 60.0, 10.0, 500)
+	date := time.Date(2025, 7, 1, 0, 0, 0, 0, time.UTC)
+	// 两条已存在的记录：环号 GH3333 占据 loc/date 的指纹。
+	if _, _, err := svc.ImportEvent(event.ImportInput{
+		BatchID: batch.ID, RingCode: "GH3333", Type: model.EventBanding,
+		LocationID: loc.ID, EventDate: date, Species: "Anser anser",
+	}); err != nil {
+		t.Fatalf("导入占位事件: %v", err)
+	}
+	// 另一条记录，校正后会把环号改成 GH3333，从而与上一条撞指纹。
+	target, _, err := svc.ImportEvent(event.ImportInput{
+		BatchID: batch.ID, RingCode: "GH4444", Type: model.EventBanding,
+		LocationID: loc.ID, EventDate: date, Species: "Anser anser",
+	})
+	if err != nil {
+		t.Fatalf("导入待校正事件: %v", err)
+	}
+	if err := svc.CorrectRing(target.ID, "GH3333", "Anser anser"); err != model.ErrDuplicate {
+		t.Fatalf("校正撞指纹应返回 ErrDuplicate, 实际: %v", err)
+	}
+}
+
 // TestInvalidTransition 验证状态机非法流转被拒绝。
 func TestInvalidTransition(t *testing.T) {
 	svc := New(newTestDB(t))

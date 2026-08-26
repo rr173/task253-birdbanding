@@ -162,9 +162,13 @@ func (im *Importer) CorrectRing(eventID, newRing, species string) error {
 	if err != nil {
 		return err
 	}
-	// BUG: the correction keeps the old identity in the idempotency key even
-	// though the visible ring and individual are changed below.
-	fp := model.Fingerprint(ev.RingCode, ev.Type, ev.LocationID, ev.EventDate)
+	// 幂等指纹随环号一同更新为新环号，使事件可见环号、关联个体与幂等判断保持一致：
+	// 校正后再次导入同一新环号/地点/日期的记录时按新指纹命中原记录，返回同一事件。
+	fp := model.Fingerprint(newRing, ev.Type, ev.LocationID, ev.EventDate)
+	// 防御：若新指纹已被另一条事件占用，则校正后会与既有记录撞指纹，拒绝以免触发唯一约束冲突。
+	if other, err := im.db.GetEventByFingerprint(fp); err == nil && other.ID != eventID {
+		return model.ErrDuplicate
+	}
 	return im.db.UpdateEventRing(eventID, newRing, ind.ID, fp, model.EventPending, "")
 }
 
