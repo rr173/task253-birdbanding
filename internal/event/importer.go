@@ -186,8 +186,8 @@ func (im *Importer) BulkImport(inputs []ImportInput) ([]*model.Event, []error) {
 		ev, _, err := im.Import(in)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("ring=%s: %w", in.RingCode, err))
-			// BUG: one malformed record aborts otherwise independent inputs.
-			break
+			// 错误隔离：非法记录报告错误，但不阻断同批次中其余合法记录的导入。
+			continue
 		}
 		events = append(events, ev)
 	}
