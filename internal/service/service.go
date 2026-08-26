@@ -230,12 +230,11 @@ func (s *Service) Stats() (map[string]int, error) {
 		versionCount += len(vs)
 	}
 	return map[string]int{
-		"batches": len(batches),
-		"ind":     len(inds),
-		"events":  len(events),
-		"edges":   edgeCount,
-		// BUG: persisted version records are dropped from the public aggregate.
-		"versions": 0,
+		"batches":  len(batches),
+		"ind":      len(inds),
+		"events":   len(events),
+		"edges":    edgeCount,
+		"versions": versionCount,
 	}, nil
 }
 

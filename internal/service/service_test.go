@@ -101,6 +101,74 @@ func TestClosedLoop(t *testing.T) {
 	}
 }
 
+// TestStatsVersionsReflectSavedRecords 验证概览统计准确反映已保存的路径版本记录。
+func TestStatsVersionsReflectSavedRecords(t *testing.T) {
+	svc := New(newTestDB(t))
+
+	batch, err := svc.CreateBatch("测试批次")
+	if err != nil {
+		t.Fatalf("创建批次: %v", err)
+	}
+	locA, _ := svc.CreateLocation("繁殖地", 60.0, 10.0, 500)
+	locB, _ := svc.CreateLocation("越冬地", 30.0, 10.0, 500)
+	ind, _, err := svc.ResolveIndividual("AB1234", "Anser anser")
+	if err != nil {
+		t.Fatalf("关联个体: %v", err)
+	}
+	banding, _, err := svc.ImportEvent(event.ImportInput{
+		BatchID: batch.ID, RingCode: "AB1234", Type: model.EventBanding,
+		LocationID: locA.ID, EventDate: time.Date(2025, 3, 1, 0, 0, 0, 0, time.UTC), Species: "Anser anser",
+	})
+	if err != nil {
+		t.Fatalf("导入环志: %v", err)
+	}
+	recap, _, err := svc.ImportEvent(event.ImportInput{
+		BatchID: batch.ID, RingCode: "AB1234", Type: model.EventRecapture,
+		LocationID: locB.ID, EventDate: time.Date(2025, 11, 1, 0, 0, 0, 0, time.UTC), Species: "Anser anser",
+	})
+	if err != nil {
+		t.Fatalf("导入重捕: %v", err)
+	}
+	if err := svc.ValidateEvent(banding.ID, time.Time{}); err != nil {
+		t.Fatalf("校验环志: %v", err)
+	}
+	if err := svc.ValidateEvent(recap.ID, banding.EventDate); err != nil {
+		t.Fatalf("校验重捕: %v", err)
+	}
+	edges, err := svc.BuildEdges(ind.ID)
+	if err != nil {
+		t.Fatalf("构建迁徙边: %v", err)
+	}
+	if err := svc.ConfirmEdge(edges[0].ID); err != nil {
+		t.Fatalf("确认边: %v", err)
+	}
+	if _, err := svc.CreateVersion(ind.ID, "v1"); err != nil {
+		t.Fatalf("创建版本: %v", err)
+	}
+
+	// 保存一条迁徙路径版本后，概览中的版本数量应准确反映已保存记录。
+	stats, err := svc.Stats()
+	if err != nil {
+		t.Fatalf("统计: %v", err)
+	}
+	if got, want := stats["versions"], 1; got != want {
+		t.Fatalf("versions 统计不准确: got %d want %d", got, want)
+	}
+	// 其他统计应保持正确。
+	if got, want := stats["batches"], 1; got != want {
+		t.Fatalf("batches 统计: got %d want %d", got, want)
+	}
+	if got, want := stats["ind"], 1; got != want {
+		t.Fatalf("ind 统计: got %d want %d", got, want)
+	}
+	if got, want := stats["events"], 2; got != want {
+		t.Fatalf("events 统计: got %d want %d", got, want)
+	}
+	if got, want := stats["edges"], 1; got != want {
+		t.Fatalf("edges 统计: got %d want %d", got, want)
+	}
+}
+
 // TestIdempotentImport 验证重复指纹导入为幂等（不重复落库）。
 func TestIdempotentImport(t *testing.T) {
 	svc := New(newTestDB(t))
