@@ -101,6 +101,94 @@ func TestClosedLoop(t *testing.T) {
 	}
 }
 
+// TestFrozenVersionImmutable 验证冻结版本不可追加或移除边，草稿与共享仍可编辑。
+func TestFrozenVersionImmutable(t *testing.T) {
+	svc := New(newTestDB(t))
+
+	batch, err := svc.CreateBatch("不可变批次")
+	if err != nil {
+		t.Fatalf("创建批次: %v", err)
+	}
+	locA, err := svc.CreateLocation("繁殖地", 60.0, 10.0, 500)
+	if err != nil {
+		t.Fatalf("地点A: %v", err)
+	}
+	locB, err := svc.CreateLocation("越冬地", 30.0, 10.0, 500)
+	if err != nil {
+		t.Fatalf("地点B: %v", err)
+	}
+	ind, _, err := svc.ResolveIndividual("GH3456", "Anser anser")
+	if err != nil {
+		t.Fatalf("关联个体: %v", err)
+	}
+	banding, _, err := svc.ImportEvent(event.ImportInput{
+		BatchID: batch.ID, RingCode: "GH3456", Type: model.EventBanding,
+		LocationID: locA.ID, EventDate: time.Date(2025, 3, 1, 0, 0, 0, 0, time.UTC), Species: "Anser anser",
+	})
+	if err != nil {
+		t.Fatalf("导入环志: %v", err)
+	}
+	recap, _, err := svc.ImportEvent(event.ImportInput{
+		BatchID: batch.ID, RingCode: "GH3456", Type: model.EventRecapture,
+		LocationID: locB.ID, EventDate: time.Date(2025, 11, 1, 0, 0, 0, 0, time.UTC), Species: "Anser anser",
+	})
+	if err != nil {
+		t.Fatalf("导入重捕: %v", err)
+	}
+	if err := svc.ValidateEvent(banding.ID, time.Time{}); err != nil {
+		t.Fatalf("校验环志: %v", err)
+	}
+	if err := svc.ValidateEvent(recap.ID, banding.EventDate); err != nil {
+		t.Fatalf("校验重捕: %v", err)
+	}
+	edges, err := svc.BuildEdges(ind.ID)
+	if err != nil || len(edges) != 1 {
+		t.Fatalf("构建迁徙边: %v edges=%d", err, len(edges))
+	}
+	if err := svc.ConfirmEdge(edges[0].ID); err != nil {
+		t.Fatalf("确认边: %v", err)
+	}
+
+	ver, err := svc.CreateVersion(ind.ID, "v-immutable")
+	if err != nil {
+		t.Fatalf("创建版本: %v", err)
+	}
+	// 草稿态可正常追加与移除。
+	if err := svc.AddEdgeToVersion(ver.ID, edges[0].ID); err != nil {
+		t.Fatalf("草稿追加边应成功: %v", err)
+	}
+	if err := svc.RemoveEdgeFromVersion(ver.ID, edges[0].ID); err != nil {
+		t.Fatalf("草稿移除边应成功: %v", err)
+	}
+	// 共享态仍可编辑。
+	if err := svc.TransitionVersion(ver.ID, model.VersionShared); err != nil {
+		t.Fatalf("共享: %v", err)
+	}
+	if err := svc.AddEdgeToVersion(ver.ID, edges[0].ID); err != nil {
+		t.Fatalf("共享追加边应成功: %v", err)
+	}
+	// 冻结后不可追加或移除。
+	if err := svc.TransitionVersion(ver.ID, model.VersionFrozen); err != nil {
+		t.Fatalf("冻结: %v", err)
+	}
+	if err := svc.AddEdgeToVersion(ver.ID, edges[0].ID); err != model.ErrFrozenImmutable {
+		t.Fatalf("冻结后追加边应被拒绝, 实际: %v", err)
+	}
+	if err := svc.RemoveEdgeFromVersion(ver.ID, edges[0].ID); err != model.ErrFrozenImmutable {
+		t.Fatalf("冻结后移除边应被拒绝, 实际: %v", err)
+	}
+	// 已替代版本同样不可变。
+	if err := svc.TransitionVersion(ver.ID, model.VersionSuperseded); err != nil {
+		t.Fatalf("替代: %v", err)
+	}
+	if err := svc.AddEdgeToVersion(ver.ID, edges[0].ID); err != model.ErrFrozenImmutable {
+		t.Fatalf("替代后追加边应被拒绝, 实际: %v", err)
+	}
+	if err := svc.RemoveEdgeFromVersion(ver.ID, edges[0].ID); err != model.ErrFrozenImmutable {
+		t.Fatalf("替代后移除边应被拒绝, 实际: %v", err)
+	}
+}
+
 // TestIdempotentImport 验证重复指纹导入为幂等（不重复落库）。
 func TestIdempotentImport(t *testing.T) {
 	svc := New(newTestDB(t))

@@ -45,9 +45,8 @@ func (vm *VersionManager) AddEdge(versionID, edgeID string) error {
 	if err != nil {
 		return err
 	}
-	// BUG: only the terminal replacement state is rejected; frozen snapshots
-	// still reach persistence and can be mutated.
-	if v.Status == model.VersionSuperseded {
+	// 冻结与已替代均为不可变快照，禁止再追加或移除边成员。
+	if v.Status.IsImmutable() {
 		return model.ErrFrozenImmutable
 	}
 	existing, err := vm.db.ListVersionEdges(versionID)
